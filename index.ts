@@ -1,86 +1,109 @@
-import express from "express"
-import axios from "axios"
+import https from "https"
 import dotenv from "dotenv"
-import fs, { write } from "fs"
+import fs from "fs"
+const acrcloud = require("acrcloud")
 import { Telegraf } from "telegraf"
-
-const chatIds: number[] = []
-
+import axios from "axios"
 dotenv.config()
 
-const BOT_TOKEN: any = process.env.BOT_TOKEN
-const AUDD_API_TOKEN: any = process.env.AUDD_API_TOKEN
+const chatIDs: number[] = []
+const BOT_TOKEN = process.env.BOT_TOKEN
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY
+
+const acr = new acrcloud({
+    host: process.env.ACR_HOST,
+    access_key: process.env.ACR_ACCESS_KEY,
+    access_secret: process.env.ACR_ACCESS_SECRET
+});
+
+
 
 if (!BOT_TOKEN) {
-    console.log("you need check your BOT_TOKEN")
+    console.log("YOUR BOT TOKEN ISN'T WORKING")
 } else {
+
     const bot = new Telegraf(BOT_TOKEN)
     bot.start((ctx) => {
-        ctx.sendMessage("Welcome to our BOT!")
-        const userID = ctx.update.message.chat.id
-        if (!chatIds.includes(userID)) {
-            chatIds.push(userID)
+        ctx.reply("Welcome to our bot!")
+        if (!chatIDs.includes(ctx.update.message.chat.id)) {
+            chatIDs.push(ctx.update.message.chat.id)
         }
+
     })
-    bot.on("video", async (ctx) => {
-        const message_id = ctx.update.message.message_id
-        ctx.reply("We're on the way.....")
+
+    bot.on("video", (ctx) => {
 
         try {
+            const videoID = ctx.update.message.video.file_id
+            ctx.telegram.getFileLink(videoID).then(async (link) => {
+                https.get(link, (response) =>
+                    response.pipe(fs.createWriteStream(`./temp/${videoID}.mp4`))
+                );
 
-            const fileId: string = ctx.message.video.file_id
-            const fileLink = await ctx.telegram.getFileLink(fileId)
+                const recognizeAudio = async (sample: string) => {
+                    try {
 
-            // Download the video
-            const videoPath = `./temp/${fileId}.mp4`
-            const writer = fs.createWriteStream(videoPath)
+                        const path = fs.readFileSync(`./temp/${videoID}.mp4`)
 
+                        const response = await acr.identify(path);
 
-            const response = await axios({
-                url: fileLink.href,
-                method: "GET",
-                responseType: "stream"
+                        if (response.status.code === 0) {
+                            console.log('Recognized:', response.metadata.music[0]);
+                            getShazamDetails(response.metadata.music[0].artists[0].name,
+                                response.metadata.music[0].title).then((track) => {
+                                    if (track) {
+                                        console.log("Track found:", track);
+                                    } else {
+                                        console.log("Track not found.");
+                                    }
+                                });
+                        } else {
+                            console.log('Recognition failed:', response.status.msg);
+                        }
+                    } catch (error: any) {
+                        console.error('Error:', error.message);
+                    }
+                };
+                recognizeAudio(`./songs/${videoID}`)
             });
-
-            response.data.pipe(writer)
-
-            // Wait for the download to complete
-            await new Promise((resolve, reject) => {
-                writer.on('finish', resolve);
-                writer.on('error', reject);
-            });
-
-            // Send video to song recognition API (using Audd.io as an example)
-            const apiResponse = await axios.post('https://api.audd.io/', {
-                api_token: AUDD_API_TOKEN,
-                file: fs.createReadStream(videoPath),
-            }, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                },
-            });
-            // Send recognition result to user
-            if (apiResponse.data && apiResponse.data.result) {
-                const songDetails = apiResponse.data.result;
-                ctx.deleteMessage(message_id + 1)
-                await ctx.reply(`Song Recognized! 🎵\n\nTitle: ${songDetails.title}\nArtist: ${songDetails.artist}`);
-                console.log(message_id)
-
-            } else {
-                ctx.deleteMessage(message_id + 1)
-                await ctx.reply("Sorry, I couldn't recognize the song. 😔");
-            }
-
         } catch (error) {
-            console.error(error)
-            ctx.reply("An error occurred while processing the video. Please try again.")
-
+            ctx.reply("Unable to find the song")
+            console.log(error)
         }
+
     })
+
 
     bot.launch()
 }
 
 
+// Replace with your RapidAPI key
 
+async function getShazamDetails(artist: string, title: string) {
+    const query = `${title} ${artist}`;
+    const options = {
+        method: "GET",
+        url: "https://shazam.p.rapidapi.com/search",
+        params: { term: query, locale: "en-US", offset: "0", limit: "1" },
+        headers: {
+            "X-RapidAPI-Key": RAPIDAPI_KEY,
+            "X-RapidAPI-Host": "shazam.p.rapidapi.com",
+        },
+    };
 
+    try {
+        const response = await axios.request(options);
+        const track = response.data.tracks?.hits[0]?.track;
+
+        if (!track) {
+            console.log("No results found.");
+            return null;
+        }
+
+        return track;
+    } catch (error: any) {
+        console.error("Error fetching Shazam data:", error.message);
+        return null;
+    }
+}
