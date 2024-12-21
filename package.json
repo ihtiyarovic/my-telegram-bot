@@ -1,7 +1,7 @@
 {
   "name": "xasan",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon ts-node ./index.ts"
@@ -22,6 +22,7 @@
     "crypto": "^1.0.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "fluent-ffmpeg": "^2.1.3",
     "fs": "^0.0.1-security",
     "https": "^1.0.0",
     "needle": "^3.3.1",
