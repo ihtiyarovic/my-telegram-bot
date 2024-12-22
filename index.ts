@@ -4,9 +4,9 @@ import path from "path"
 const { Shazam } = require("node-shazam")
 import { Telegraf } from "telegraf"
 import axios from "axios";
-import ytdl from "ytdl-core";
-import ffmpeg from "fluent-ffmpeg"
-
+import { exec } from "child_process"
+import ytdl from "@distube/ytdl-core";
+const SpotifyWebApi = require("spotify-web-api-node")
 
 const request = require("request")
 dotenv.config()
@@ -15,7 +15,6 @@ const chatIDs: number[] = []
 const BOT_TOKEN = process.env.BOT_TOKEN
 const shazam = new Shazam()
 const youtube_api_key = process.env.youtube_api_key || "AIzaSyCG4zqP90ylR_u-1e-7Ze6JDfpsCSW3rak"
-let videID = ''
 let title = ""
 
 const download = (url: string, path: string, callback: any) => {
@@ -24,46 +23,32 @@ const download = (url: string, path: string, callback: any) => {
     });
 };
 
-async function downloadAudio(videoUrl: string, outputFile: string) {
-    try {
-        if (!ytdl.validateURL(videoUrl)) {
-            console.error('Invalid YouTube URL.');
+const addImageToAudio = (audioFile: string, imageFile: string) => {
+    const ffmpegCommand = `ffmpeg -i "${audioFile}" -i "${imageFile}" -map 0 -map 1 -c:a copy -c:v mjpeg -id3v2_version 3 -metadata title="Song Title" -metadata artist="Artist" "${audioFile}"`;
+
+    exec(ffmpegCommand, (err, stdout, stderr) => {
+        if (err) {
+            console.error(`Error adding image: ${stderr}`);
             return;
         }
+        console.log(`Image added to ${audioFile}`);
+    });
+};
 
-        console.log('Starting video download...');
+const downloadAudioFromYouTube = (youtubeURL: string, outputFile: string) => {
+    // yt-dlp command to download audio and convert to MP3
+    const command = `yt-dlp -x --audio-format mp3 -o "${outputFile}" "${youtubeURL}"`;
 
-        // Create a writable stream to save the video
-        const videoStream = ytdl(videoUrl, {
-            quality: 'highestaudio', // Choose the best available quality
-            filter: "audioonly",
-        });
+    exec(command, (err, stdout, stderr) => {
+        if (err) {
+            console.error(`Error: ${stderr}`);
+            return;
+        }
+        addImageToAudio(outputFile, "./mine.jpg")
+    })
+};
 
-        console.log(videoStream)
 
-        const writeStream = fs.createWriteStream(outputFile);
-
-        // Pipe the video stream into the write stream
-        videoStream.pipe(writeStream);
-
-        // Listen for completion
-        writeStream.on('finish', () => {
-            console.log(`Video downloaded and saved as ${outputFile}`);
-        });
-
-        // Listen for errors
-        videoStream.on('error', (err) => {
-            console.error('Error downloading video:', err.message);
-        });
-        writeStream.on('error', (err) => {
-            console.error('Error saving video:', err.message);
-        });
-    }
-    catch (err: any) {
-        console.error('Error:', err.message);
-
-    };
-}
 
 if (!BOT_TOKEN) {
     console.log("YOUR BOT TOKEN iSN'T VALID")
@@ -87,7 +72,7 @@ if (!BOT_TOKEN) {
 
     bot.on("video", async (ctx) => {
         try {
-
+            ctx.reply("⏳")
             const video_id = await ctx.telegram.getFile(ctx.update.message.video.file_id)
             const res = await fetch(
                 `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${video_id.file_id}`
@@ -115,9 +100,16 @@ if (!BOT_TOKEN) {
                             q: encodeURIComponent(query)
                         }
                     }).then((res) => {
-                        videID = res.data.items[0].id.videoId
-                        const videoUrl = `https://www.youtube.com/watch?v=${videID}`;
-                        downloadAudio(videoUrl, `./${title}.mp3`)
+                        downloadAudioFromYouTube(`https://www.youtube.com/watch?v=${res.data.items[0].id.videoId}`, `./songs/@in2_something - ${title}.mp3`)
+                        // ctx.sendAudio(`./songs/in2_something - ${title}.mp3`)
+                        // fs.unlink(`./songs/in2_something - ${title}.mp3`
+                        //     , (err: any) => {
+                        //         console.error(err)
+                        //     })
+                        // fs.unlink(`./videos/${video_id.file_id}.mp4`
+                        //     , (err: any) => {
+                        //         console.error(err)
+                        //     })
                     })
 
                 }
