@@ -1,11 +1,9 @@
 import dotenv from "dotenv"
 import * as fs from 'fs';
-import path from "path"
 const { Shazam } = require("node-shazam")
 import { Telegraf } from "telegraf"
 import axios from "axios";
-import { exec } from "child_process"
-import ytdl from "@distube/ytdl-core";
+
 const SpotifyWebApi = require("spotify-web-api-node")
 
 const request = require("request")
@@ -14,8 +12,11 @@ dotenv.config()
 const chatIDs: number[] = []
 const BOT_TOKEN = process.env.BOT_TOKEN
 const shazam = new Shazam()
-const youtube_api_key = process.env.youtube_api_key || "AIzaSyCG4zqP90ylR_u-1e-7Ze6JDfpsCSW3rak"
-let title = ""
+
+const spotifyApi = new SpotifyWebApi({
+    clientId: process.env.SPOTIFY_CLIENT_ID,
+    clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+});
 
 const download = (url: string, path: string, callback: any) => {
     request.head(url, () => {
@@ -23,54 +24,62 @@ const download = (url: string, path: string, callback: any) => {
     });
 };
 
-const addImageToAudio = (audioFile: string, imageFile: string) => {
-    const ffmpegCommand = `ffmpeg -i "${audioFile}" -i "${imageFile}" -map 0 -map 1 -c:a copy -c:v mjpeg -id3v2_version 3 -metadata title="Song Title" -metadata artist="Artist" "${audioFile}"`;
+async function getTrackInfo(trackId: string) {
+    try {
+        const trackData = await spotifyApi.getTrack(trackId);
+        console.log('Track info:', trackData.body);
+        return trackData.body;
+    } catch (err) {
+        console.error('Error fetching track info:', err);
+    }
+}
 
-    exec(ffmpegCommand, (err, stdout, stderr) => {
-        if (err) {
-            console.error(`Error adding image: ${stderr}`);
-            return;
-        }
-        console.log(`Image added to ${audioFile}`);
-    });
-};
-
-const downloadAudioFromYouTube = (youtubeURL: string, outputFile: string) => {
-    // yt-dlp command to download audio and convert to MP3
-    const command = `yt-dlp -x --audio-format mp3 -o "${outputFile}" "${youtubeURL}"`;
-
-    exec(command, (err, stdout, stderr) => {
-        if (err) {
-            console.error(`Error: ${stderr}`);
-            return;
-        }
-        addImageToAudio(outputFile, "./mine.jpg")
-    })
-};
+async function searchSpotify(query: string, type = 'track') {
+    try {
+        const response = await spotifyApi.search(query, [type], { limit: 10 }); // You can adjust the limit
+        console.log(`Search results for "${query}":`);
+        response.body.tracks.items.forEach((item: any, index: any) => {
+            getTrackInfo(item.id)
+            // console.log(`${index + 1}. ${item.name} by ${item.artists.map((artist: any) => artist.name).join(', ')}`);
+        });
+    } catch (error) {
+        console.error('Error searching Spotify:', error);
+    }
+}
 
 
 
 if (!BOT_TOKEN) {
     console.log("YOUR BOT TOKEN iSN'T VALID")
 } else {
+
     const bot = new Telegraf(BOT_TOKEN)
 
 
-    bot.start((ctx) => {
+    // Main Function
+    // (async () => {
+    //     await authenticateSpotify();
+    //     const trackId = '3n3Ppam7vgaVa1iaRUc9Lp'; // Replace with a Spotify track ID
+    //     const trackInfo = await getTrackInfo(trackId);
+    //     console.log(`Track Name: ${trackInfo.name}`);
+    //     console.log(`Artists: ${trackInfo.artists.map((artist: any) => artist.name).join(', ')}`);
+    //     console.log(`Preview URL: ${trackInfo.preview_url}`);
+    // })();
+
+    // (async () => {
+    //     const previewUrl = 'https://p.scdn.co/mp3-preview/...'; // Replace with a real preview URL
+    //     await downloadPreview(previewUrl, 'preview.mp3');
+    // })();
+
+    bot.start((ctx: any) => {
         ctx.reply("Welcome to our bot!")
-
-        // axios.request(options).then(res => {
-        //     console.log(res)
-        // }).catch(error => {
-        //     console.error(error)
-        // })
-
         if (!chatIDs.includes(ctx.update.message.chat.id)) {
             chatIDs.push(ctx.update.message.chat.id)
         }
     })
 
-    bot.on("video", async (ctx) => {
+
+    bot.on("video", async (ctx: any) => {
         try {
             ctx.reply("⏳")
             const video_id = await ctx.telegram.getFile(ctx.update.message.video.file_id)
@@ -80,41 +89,38 @@ if (!BOT_TOKEN) {
 
             const res2 = await res.json();
             const filePath = res2.result.file_path;
-
             const downloadURL =
                 `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${filePath}`;
 
+            download(downloadURL, `./videos/${res2.result.file_id}.mp4`, async () => {
+                const recognise = await shazam.recognise(`./videos/${res2.result.file_id}.mp4`)
 
-            download(downloadURL, path.join('./videos/', `${video_id.file_id}.mp4`), async () => {
-                const recognise = await shazam.recognise(`./videos/${video_id.file_id}.mp4`)
-                if (!recognise) {
-                    ctx.reply("Unfortunately, we couldn't find your song!")
-                } else {
-                    title = recognise.track.title
-                    const query = `${recognise.track.title} ${recognise.track.subtitle} official audio`;
+                // Finds song by searching its name
+                // const track = await shazam.search_music('en-US', 'GB', `G'animat Asl Wayne`, '1', '0')
 
-                    axios.get(`https://youtube.googleapis.com/youtube/v3/search?key=${youtube_api_key}`, {
-                        params: {
-                            key: youtube_api_key,
-                            part: "snippet",
-                            q: encodeURIComponent(query)
-                        }
-                    }).then((res) => {
-                        downloadAudioFromYouTube(`https://www.youtube.com/watch?v=${res.data.items[0].id.videoId}`, `./songs/@in2_something - ${title}.mp3`)
-                        // ctx.sendAudio(`./songs/in2_something - ${title}.mp3`)
-                        // fs.unlink(`./songs/in2_something - ${title}.mp3`
-                        //     , (err: any) => {
-                        //         console.error(err)
-                        //     })
-                        // fs.unlink(`./videos/${video_id.file_id}.mp4`
-                        //     , (err: any) => {
-                        //         console.error(err)
-                        //     })
-                    })
-
+                let title = recognise.track.title
+                try {
+                    const data = await spotifyApi.clientCredentialsGrant();
+                    spotifyApi.setAccessToken(data.body['access_token']);
+                    console.log('Successfully authenticated with Spotify API.');
+                } catch (error) {
+                    console.error('Error authenticating with Spotify API:', error);
                 }
-            }
-            );
+                searchSpotify(`${encodeURI(title)}`)
+            })
+
+            // try {
+            //     const response = await axios.get('https://api.jamendo.com/v3.0/tracks', {
+            //         params: {
+            //             client_id: process.env.JAMENDO_CLIENT_ADI,
+            //             name: title,
+            //             limit: 1, // You can adjust the limit as needed
+            //         },
+            //     });
+            //     console.log(response)
+            // } catch (err: any) {
+            //     console.error(err)
+            // }
         } catch (error: any) {
             ctx.reply("Error occured while procesing the audio!")
             console.log(error)
